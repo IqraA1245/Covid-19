@@ -18,6 +18,7 @@ Examine demographic differences like population, median age, and population dens
 
 Highlight key performance indicators (KPIs) to compare outcomes
 
+<img width="2440" height="1559" alt="image" src="https://github.com/user-attachments/assets/69bad3a9-fda9-4c8a-9111-ff37cb8715cb" />
 
 
 
