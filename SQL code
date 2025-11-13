@@ -1,0 +1,485 @@
+
+
+-- Basic Data Exploraion (data structure)
+
+SELECT TOP 5 * FROM portfolio..CovidDeaths
+SELECT TOP 5 * FROM portfolio..CovidVaccinations
+
+		-- check data coverage 
+SELECT 
+	MIN (date) AS start_date, 
+	MAX (date) AS end_date,
+	COUNT (DISTINCT location) AS total_countries 
+FROM portfolio..CovidDeaths
+WHERE continent IS NOT NULL;
+					-- 2020-01-01 to 2021-04-30 (210 countries)
+
+
+
+
+
+-- Compare two countries with similar population sizes 
+       
+
+
+SELECT location,continent, max(population) AS population  
+FROM portfolio.. CovidDeaths
+WHERE continent IS NOT NULL
+GROUP BY location, continent
+ORDER BY population desc
+
+
+    --United Kingdom and France have similar population sizes and are within the same continent
+    -- lets compare how each of these countries responded to Covid-19 according to the data 
+
+    -- We can then compare them to the global average 
+
+
+-- total deaths and cases
+SELECT 
+    location,
+    SUM(new_cases) AS Total_Cases,
+    SUM(cast(new_deaths as int)) AS Total_Deaths,
+    SUM(cast(new_deaths as int)) * 100.0 / SUM(new_cases) AS Death_Rate
+FROM portfolio..CovidDeaths
+WHERE continent IS NOT NULL
+    AND location IN ('United Kingdom', 'France')
+GROUP BY location
+ORDER BY Death_Rate DESC
+
+SELECT 
+    location,
+    date,
+    new_cases,
+    new_deaths
+FROM portfolio..CovidDeaths
+WHERE continent IS NOT NULL
+  AND location IN ('United Kingdom', 'France')
+ORDER BY location, date;
+
+
+
+-- daily deaths 
+SELECT location,
+    date,
+    SUM(cast(new_deaths as int)) AS Deaths_Per_Day
+FROM portfolio..CovidDeaths
+WHERE continent IS NOT NULL
+    AND location IN ('United Kingdom', 'France')
+GROUP BY location,date
+ORDER BY location,date ASC;
+
+
+
+
+-- Total vaccines per country (partial and full vaccinations)
+SELECT
+    vax.location,
+    MAX(CAST(vax.people_vaccinated AS INT)) AS Total_Vaccinated,
+    MAX(CAST(vax.people_fully_vaccinated AS INT)) AS Fully_Vaccinated,
+    MAX(CAST(death.population AS INT)) AS Population,
+    (MAX(CAST(vax.people_vaccinated AS INT)) * 100.0 / MAX(CAST(death.population AS INT))) AS Percent_Vaccinated
+FROM portfolio..CovidVaccinations AS vax
+JOIN portfolio..CovidDeaths AS death
+    ON vax.location = death.location
+WHERE death.continent IS NOT NULL
+    AND vax.location IN ('United Kingdom', 'France')
+GROUP BY vax.location
+ORDER BY Percent_Vaccinated DESC;
+
+SELECT
+    vax.location,
+    MAX(CAST(vax.people_vaccinated AS INT)) AS Total_Vaccinated,
+    MAX(CAST(vax.people_fully_vaccinated AS INT)) AS Fully_Vaccinated,
+    MAX(CAST(death.population AS INT)) AS Population,
+    (MAX(CAST(vax.people_vaccinated AS INT)) * 100.0 / MAX(CAST(death.population AS INT))) AS Percent_Vaccinated
+FROM portfolio..CovidVaccinations AS vax
+JOIN portfolio..CovidDeaths AS death
+    ON vax.location = death.location
+WHERE death.continent IS NOT NULL
+GROUP BY vax.location
+ORDER BY Percent_Vaccinated DESC;
+
+-- Rolling vaccinations 
+
+SELECT
+    location,
+    date,
+    SUM(CAST(new_vaccinations AS INT)) 
+        OVER (PARTITION BY location ORDER BY date) AS Rolling_Vaccinations
+FROM portfolio..CovidVaccinations
+WHERE continent IS NOT NULL
+    AND location IN ('United Kingdom', 'France')
+
+
+
+-- Number of people vaccinated within the first 7 days of vaccine rollout
+SELECT
+    location,
+    SUM(CAST(new_vaccinations AS INT)) AS total_vaccinated_first_7_days
+FROM portfolio..CovidVaccinations
+WHERE 
+    (location = 'United Kingdom' AND [date] BETWEEN '2020-12-08' AND '2020-12-14')
+    OR
+    (location = 'France' AND [date] BETWEEN '2020-12-27' AND '2021-01-02')
+GROUP BY location;
+
+
+-- How long it took for the UK and France to start administering vaccines
+-- Compare vaccine approval date vs. first recorded rollout
+SELECT
+    location,
+    CASE 
+        WHEN location = 'United Kingdom' THEN CAST('2020-12-08' AS DATE)
+        WHEN location = 'France' THEN CAST('2020-12-27' AS DATE)
+    END AS Vaccine_Approval_Date,
+    MIN([date]) AS First_Vaccine_Date,
+    DATEDIFF(
+        DAY,
+        CASE 
+            WHEN location = 'United Kingdom' THEN '2020-12-08'
+            WHEN location = 'France' THEN '2020-12-27'
+        END,
+        MIN([date])
+    ) AS Days_After_Approval
+FROM portfolio..CovidVaccinations
+WHERE location IN ('United Kingdom', 'France')
+  AND total_vaccinations > 0
+GROUP BY location;
+
+
+
+
+
+
+
+
+
+-- deaths and vaccinations 
+SELECT 
+    death.continent,
+    death.location,
+    death.date,
+    death.population,
+    death.new_deaths,
+    vax.new_vaccinations,
+    SUM(CAST(vax.new_vaccinations AS INT)) 
+        OVER (PARTITION BY death.location ORDER BY death.date) AS Rolling_Vaccinations,
+    SUM(CAST(death.new_deaths AS INT)) 
+        OVER (PARTITION BY death.location ORDER BY death.date) AS Rolling_Deaths
+FROM portfolio..CovidDeaths death
+JOIN portfolio..CovidVaccinations vax
+    ON death.location = vax.location
+    AND death.date = vax.date
+WHERE death.continent IS NOT NULL
+ AND vax.location IN ('United Kingdom', 'France')
+
+
+
+
+
+ -- comparing vaccination rates vs death rates post vaccine (by end date what percentage where vaccinated and the death rates)
+
+    -- Find when each country began vaccinating 
+
+   WITH FirstVaxDate AS(
+    SELECT location,
+        MIN(date) AS first_vax_date
+    FROM portfolio..CovidVaccinations
+    WHERE people_vaccinated > 0
+        AND location IN('United Kingdom', 'France')
+    GROUP BY location
+    ),
+
+-- combine the countries filtering for their start dates 
+  PostVaxData AS(
+ SELECT 
+    death.continent,
+    death.location,
+    death.date,
+    CAST(death.population AS INT) AS population, 
+    CAST(death.new_cases AS INT) AS New_Cases, 
+    CAST(death.new_deaths AS INT) AS New_deaths, 
+    CAST(vax.people_vaccinated AS INT) AS People_vaccinated 
+  FROM portfolio..CovidDeaths death
+  JOIN portfolio..CovidVaccinations vax
+    ON death.location = vax.location 
+JOIN firstVaxDate f
+    ON death.location = f.location
+WHERE death.continent IS NOT NULL 
+    AND death.date >= f.first_vax_date 
+    AND death.location IN ('United Kingdom', 'France')
+),
+
+-- aggregate post vaccine totals
+Summary AS (
+    SELECT 
+        continent,
+        location,
+        MAX(population) AS population,
+        MAX(people_vaccinated) AS Total_Vaccinated,
+        SUM(New_Deaths) AS Total_Deaths_PostVax,
+        SUM(New_Cases) AS Total_Cases_PostVax
+    FROM PostVaxData
+    GROUP BY continent, location
+)
+
+-- calculate rates
+SELECT 
+    continent,
+    location,
+    population,
+    Total_Vaccinated,
+    Total_Deaths_PostVax,
+    Total_Cases_PostVax,
+    (Total_Deaths_PostVax * 100.0 / NULLIF(Total_Cases_PostVax,0)) AS Death_rate_PostVax,
+    (Total_Deaths_PostVax * 1000000.0 / NULLIF(population,0)) AS Deaths_per_Million
+FROM Summary
+ORDER BY Death_rate_PostVax DESC;
+
+
+-- The UK had twice the amount of vaccinations but twice the death rate
+--lets explore this further to consider reasons using the data
+-- We may want to consider:
+    -- population density 
+    -- Completion of full vaccination
+    -- Median age of the population
+    -- Cardiovascular death
+    
+
+    -------- POPULATION AND MEDIAN AGE ---------
+
+
+    --highest population density and median age 
+SELECT 
+    location,
+    MAX(population_density) AS Population_Density,
+    MAX(median_age) AS Median_Age
+FROM portfolio..CovidDeaths
+WHERE continent IS NOT NULL
+AND location IN ('United Kingdom', 'France')
+GROUP BY location
+ORDER BY Population_Density DESC;
+
+
+
+-- relationship between population density and deaths
+--population density vs deaths or cases per capita
+
+SELECT
+    death.location,
+    AVG(TRY_CAST(vax.population_density AS FLOAT)) AS Population_Density,
+    SUM(TRY_CAST(death.total_deaths AS FLOAT)) 
+        / NULLIF(MAX(TRY_CAST(death.population AS FLOAT)), 0) * 1000000 AS Deaths_per_Million,
+    SUM(TRY_CAST(death.total_cases AS FLOAT)) 
+        / NULLIF(MAX(TRY_CAST(death.population AS FLOAT)), 0) * 1000000 AS Cases_per_Million
+FROM portfolio..CovidDeaths death
+JOIN portfolio..CovidVaccinations vax
+    ON death.location = vax.location
+WHERE death.continent IS NOT NULL
+AND death.location IN ('United Kingdom', 'France')
+GROUP BY death.location
+ORDER BY Population_Density DESC;
+
+
+
+-- hospital and ICU admissions (per million)
+
+SELECT
+    death.location,
+    AVG(CAST(death.hosp_patients_per_million AS FLOAT)) AS Avg_Hospital_Admiss_per_million,
+    AVG(CAST(death.icu_patients_per_million AS FLOAT)) AS Avg_ICU_Admiss_per_million
+FROM portfolio..CovidDeaths death
+WHERE death.continent IS NOT NULL
+AND death.location IN ('United Kingdom', 'France')
+GROUP BY death.location
+ORDER BY Avg_Hospital_Admiss_per_million DESC;
+
+
+-- High vaccination coverage and hospital/ICU/death decline
+
+WITH VaccImpact AS (
+    SELECT
+        vax.location,
+        MAX(TRY_CAST(vax.people_vaccinated_per_hundred AS FLOAT)) AS Max_Vacc_Coverage,
+        AVG(TRY_CAST(death.hosp_patients_per_million AS FLOAT)) AS Avg_Hospital_Admissions,
+        AVG(TRY_CAST(death.icu_patients_per_million AS FLOAT)) AS Avg_ICU_Admissions,
+        SUM(TRY_CAST(death.new_deaths AS FLOAT)) / NULLIF(SUM(TRY_CAST(death.new_cases AS FLOAT)), 0) * 100 AS Death_Rate_Percent
+    FROM portfolio..CovidDeaths death
+    JOIN portfolio..CovidVaccinations vax
+        ON death.location = vax.location
+        AND death.date = vax.date
+    WHERE death.continent IS NOT NULL
+    AND death.location IN ('United Kingdom', 'France')
+
+    GROUP BY vax.location
+)
+SELECT
+    location,
+    Max_Vacc_Coverage,
+    Avg_Hospital_Admissions,
+    Avg_ICU_Admissions,
+    Death_Rate_Percent
+FROM VaccImpact
+ORDER BY Max_Vacc_Coverage DESC;
+
+
+
+
+     ------ COMPLETION OF FULL VACCINE COURSE------
+
+     SELECT
+    location,
+    MAX(people_fully_vaccinated) AS Total_Fully_Vaccinated
+FROM portfolio..CovidVaccinations
+WHERE location IN ('United Kingdom', 'France')
+GROUP BY location
+ORDER BY Total_Fully_Vaccinated DESC;
+
+
+--globally fully vaccinated 
+   SELECT
+    location,continent,
+    MAX(people_fully_vaccinated) AS Total_Fully_Vaccinated
+FROM portfolio..CovidVaccinations
+WHERE continent IS NOT NULL
+GROUP BY location,continent
+ORDER BY Total_Fully_Vaccinated DESC;
+
+
+
+
+
+
+-- how many people are partially vaccinated vs totally vaccinated and cardiovascular death 
+
+SELECT
+    vax.location,
+    MAX(vax.people_vaccinated) AS Total_Partially_Vaccinated,
+    MAX(vax.people_fully_vaccinated) AS Total_Fully_Vaccinated,
+    MAX(death.cardiovasc_death_rate) AS Cardiovascular_Death_Rate,
+    MAX(death.population) AS Population
+FROM portfolio..CovidVaccinations vax
+JOIN portfolio..CovidDeaths death
+    ON vax.location = death.location
+    AND vax.date = death.date
+WHERE vax.location IN ('United Kingdom', 'France')
+GROUP BY vax.location;
+
+
+
+
+
+
+-- Stringency index 
+
+        -- stringency index over time (month to month)
+
+SELECT
+    location,
+    FORMAT(date, 'yyyy-MM') AS month,
+    AVG(stringency_index) AS avg_stringency_index
+FROM portfolio..CovidDeaths
+WHERE location IN ('United Kingdom', 'France')
+  AND stringency_index IS NOT NULL
+GROUP BY location, FORMAT(date, 'yyyy-MM')
+ORDER BY location, month;
+
+
+
+    -- explore the highest stringency index score for both countries  
+
+SELECT 
+location,
+MAX(stringency_index) AS Stringency_index
+FROM portfolio..CovidVaccinations
+WHERE continent IS NOT NULL
+    AND location IN ('United Kingdom' , 'France')
+    Group by location 
+ORDER BY Stringency_index
+
+
+
+
+
+    -- seeing that they both achieved the same score,
+    -- lets investigate how long it took to get to reach that
+
+    WITH StringencyStart AS (
+    SELECT
+        location,
+        MIN(date) AS first_date
+    FROM portfolio..CovidDeaths
+    WHERE location IN ('United Kingdom', 'France')
+    GROUP BY location
+),
+MaxStringency AS (
+    SELECT
+        location,
+        MAX(stringency_index) AS max_stringency
+    FROM portfolio..CovidDeaths
+    WHERE location IN ('United Kingdom', 'France')
+    GROUP BY location
+),
+DateOfMax AS (
+    SELECT
+        d.location,
+        m.max_stringency,
+        MIN(d.date) AS date_of_max_stringency
+    FROM portfolio..CovidDeaths d
+    JOIN MaxStringency m
+        ON d.location = m.location AND d.stringency_index = m.max_stringency
+    WHERE d.location IN ('United Kingdom', 'France')
+    GROUP BY d.location, m.max_stringency
+)
+SELECT
+    s.location,
+    s.first_date,
+    d.date_of_max_stringency,
+    DATEDIFF(day, s.first_date, d.date_of_max_stringency) AS Days_To_Max_Stringency,
+    d.max_stringency
+FROM StringencyStart s
+JOIN DateOfMax d
+    ON s.location = d.location
+ORDER BY Days_To_Max_Stringency;
+
+
+
+-- Adding monthly deaths along with stringency
+
+SELECT
+    location,
+    FORMAT(date, 'yyyy-MM') AS month,
+    AVG(stringency_index) AS avg_stringency_index,
+    SUM(cast(new_deaths AS INT)) AS total_monthly_deaths
+FROM portfolio..CovidDeaths
+WHERE continent IS NOT NULL
+  AND location IN ('United Kingdom', 'France')
+  AND stringency_index IS NOT NULL
+GROUP BY location, FORMAT(date, 'yyyy-MM')
+ORDER BY location, month;
+
+-- Create monthly aggregated dataset with lag
+WITH Monthly AS (
+    SELECT
+        location,
+        CAST(DATEFROMPARTS(YEAR(date), MONTH(date), 1) AS date) AS month_start,
+        AVG(stringency_index) AS avg_stringency_index,
+        SUM(CAST(new_deaths AS INT)) AS total_monthly_deaths
+    FROM portfolio..CovidDeaths
+    WHERE continent IS NOT NULL
+      AND location IN ('United Kingdom', 'France')
+      AND stringency_index IS NOT NULL
+    GROUP BY location, DATEFROMPARTS(YEAR(date), MONTH(date), 1)
+)
+SELECT
+    location,
+    month_start,
+    total_monthly_deaths,                                
+    LAG(avg_stringency_index, 1) OVER (
+        PARTITION BY location ORDER BY month_start
+    ) AS prev_month_stringency                          
+FROM Monthly
+ORDER BY location, month_start;
+
+
